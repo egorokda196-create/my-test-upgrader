@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <title>NFT Upgrader</title>
+    <style>
+        :root {
+            --bg: #121212; --card: #1e1e1e; --text: #ffffff; 
+            --accent: #f1c40f; --btn: #0088cc; --danger: #e74c3c;
+        }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); padding: 16px; margin: 0; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        .balance { font-size: 24px; font-weight: bold; color: var(--accent); }
+        .card { background: var(--card); padding: 16px; border-radius: 12px; margin-bottom: 16px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+        .gift-item { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid #333; }
+        .gift-item:last-child { border-bottom: none; }
+        .btn { background: var(--btn); color: white; border: none; padding: 12px; border-radius: 8px; width: 100%; font-size: 16px; cursor: pointer; margin-top: 10px; transition: 0.2s; }
+        .btn:active { opacity: 0.8; transform: scale(0.98); }
+        .btn-danger { background: var(--danger); }
+        .btn-small { width: auto; padding: 6px 12px; font-size: 14px; margin: 0; }
+        .input { width: 100%; padding: 12px; margin: 8px 0; border-radius: 8px; border: 1px solid #333; background: #2a2a2a; color: white; box-sizing: border-box; }
+        .checkbox { transform: scale(1.5); margin-right: 10px; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h2>🎁 NFT Upgrader</h2>
+        <div class="balance" id="balance">0 ⭐</div>
+    </div>
+    
+    <!-- ИНВЕНТАРЬ -->
+    <div class="card">
+        <h3>📦 Инвентарь</h3>
+        <div id="inventory"><p>Загрузка...</p></div>
+    </div>
+
+    <!-- АПГРЕЙД -->
+    <div class="card">
+        <h3>⚡ Апгрейд</h3>
+        <p style="font-size: 14px; color: #aaa;">Выберите подарки для объединения:</p>
+        <div id="upgrade-list"></div>
+        <button class="btn" onclick="performUpgrade()">Выполнить апгрейд</button>
+    </div>
+
+    <!-- ВЫВОД -->
+    <div class="card">
+        <h3>💸 Вывод Stars</h3>
+        <p style="font-size: 14px; color: #aaa;">Через StaticGram</p>
+        <input type="number" id="withdraw-amount" class="input" placeholder="Сумма Stars" min="1">
+        <button class="btn" style="background: #27ae60;" onclick="withdraw()">Вывести</button>
+    </div>
+
+    <script>
+        const tg = window.Telegram.WebApp;
+        tg.ready();
+        // Получаем ID пользователя из Telegram, если запущено вне телеграма - ставим тестовый 12345
+        const userId = tg.initDataUnsafe?.user?.id || 12345;
+        let currentInventory = [];
+
+        // Загрузка данных
+        async function loadData() {
+            try {
+                const res = await fetch(`/api/user/${userId}`);
+                const data = await res.json();
+                
+                document.getElementById('balance').innerText = data.balance + ' ⭐';
+                currentInventory = data.inventory;
+                
+                const inv = document.getElementById('inventory');
+                const upg = document.getElementById('upgrade-list');
+                
+                if (data.inventory.length === 0) {
+                    inv.innerHTML = '<p style="color: #666;">Пусто</p>';
+                    upg.innerHTML = '<p style="color: #666;">Нет подарков для апгрейда</p>';
+                } else {
+                    // Рендер инвентаря
+                    inv.innerHTML = data.inventory.map(g => `
+                        <div class="gift-item">
+                            <span>${g.emoji || '🎁'} ${g.name}</span>
+                            <div>
+                                <span style="color: var(--accent); margin-right: 10px;">${g.price} ⭐</span>
+                                <button class="btn btn-small btn-danger" onclick="sellGift('${g.id}')">Продать</button>
+                            </div>
+                        </div>
+                    `).join('');
+
+                    // Рендер списка для апгрейда (чекбоксы)
+                    upg.innerHTML = data.inventory.map(g => `
+                        <div class="gift-item">
+                            <label>
+                                <input type="checkbox" class="checkbox upgrade-checkbox" value="${g.id}" data-price="${g.price}">
+                                ${g.emoji || '🎁'} ${g.name} (${g.price} ⭐)
+                            </label>
+                        </div>
+                    `).join('');
+                }
+            } catch (e) {
+                console.error("Ошибка загрузки:", e);
+            }
+        }
+
+        // Продажа подарка
+        async function sellGift(giftId) {
+            if (!confirm('Вы уверены, что хотите продать этот подарок?')) return;
+            const res = await fetch(`/api/sell/${userId}/${giftId}`, { method: 'POST' });
+            const data = await res.json();
+            alert(data.message);
+            loadData();
+        }
+
+        // Апгрейд
+        async function performUpgrade() {
+            const checkboxes = document.querySelectorAll('.upgrade-checkbox:checked');
+            if (checkboxes.length < 2) {
+                return alert('Выберите минимум 2 подарка для апгрейда!');
+            }
+            
+            const selectedIds = Array.from(checkboxes).map(cb => cb.value);
+            const totalPrice = Array.from(checkboxes).reduce((sum, cb) => sum + parseInt(cb.dataset.price), 0);
+
+            const res = await fetch(`/api/upgrade/${userId}`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ gift_ids: selectedIds, total_price: totalPrice })
+            });
+            const data = await res.json();
+            alert(data.message);
+            loadData();
+        }
+
+        // Вывод
+        async function withdraw() {
+            const amount = parseInt(document.getElementById('withdraw-amount').value);
+            if (!amount || amount < 1) return alert('Введите корректную сумму');
+            
+            if (!confirm(`Вывести ${amount} ⭐?`)) return;
+
+            const res = await fetch(`/api/withdraw/${userId}`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ star_count: amount })
+            });
+            const data = await res.json();
+            
+            if (res.ok) {
+                alert(`✅ ${data.message}`);
+            } else {
+                alert(`❌ Ошибка: ${data.detail}`);
+            }
+            loadData();
+        }
+
+        // Инициализация
+        loadData();
+    </script>
+</body>
+</html>
